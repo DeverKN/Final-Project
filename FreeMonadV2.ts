@@ -7,11 +7,7 @@ type HIDDEN_RESULT_TAG = typeof HIDDEN_RESULT_TAG;
 type Effect<A, B> = {
   val: A;
   [HIDDEN_RESULT_TAG]: B;
-}
-
-type EffectF<Effects extends Effect[], A> = {
-
-}
+};
 
 type HKTs<A = never, B = never, C = never, D = never> = {
   List: A[];
@@ -126,6 +122,8 @@ type StateF<S, A> = {
   runStateF: (s: S) => [A, S];
   map: <B>(f: (a: A) => B) => StateF<S, B>;
 };
+
+type EffectF<> = {};
 
 const StateF = <S, A>(runStateF: (s: S) => [A, S]): StateF<S, A> => {
   return {
@@ -263,34 +261,40 @@ const test2 = bind<"NumState", number, null>(get1, put);
 
 const testComputation = () => {
   return chain(get())
-              .bind((i) => put(i * 2))
-              .bind(get)
-              .bind((i) => put(i + 1))
-              .bind(get)
-              .end();
+    .bind((i) => put(i * 2))
+    .bind(get)
+    .bind((i) => put(i + 1))
+    .bind(get)
+    .end();
 };
 
-const wrapM = <F extends FunctorTag, A>(v: Free<F, A>): Generator<Free<F, A>, A, any> => {
+const wrapM = <F extends FunctorTag, A>(
+  v: Free<F, A>
+): Generator<Free<F, A>, A, any> => {
   return (function* (): Generator<Free<F, A>, A, any> {
     const val = yield v;
-    return val
-  }())
-}
+    return val;
+  })();
+};
 type DoGeneratorNotation<F extends FunctorTag, A> = Generator<Free<F, A>, A, A>;
-const doFree = <F extends FunctorTag, A>(gen: () => DoGeneratorNotation<F, A>): Free<F, A> => {
-  return bind(Pure(null as A), doFreeHelper(gen()))
-}
+const doFree = <F extends FunctorTag, A>(
+  gen: () => DoGeneratorNotation<F, A>
+): Free<F, A> => {
+  return bind(Pure(null as A), doFreeHelper(gen()));
+};
 
-const doFreeHelper = <F extends FunctorTag, A>(gen: DoGeneratorNotation<F, A>): ((a: A) => Free<F, A>) => {
+const doFreeHelper = <F extends FunctorTag, A>(
+  gen: DoGeneratorNotation<F, A>
+): ((a: A) => Free<F, A>) => {
   return (a) => {
     const res = gen.next(a);
     if (res.done) {
-      return Pure(res.value)
+      return Pure(res.value);
     } else {
-      return bind(res.value, doFreeHelper(gen))
+      return bind(res.value, doFreeHelper(gen));
     }
-  }
-}
+  };
+};
 
 const test = doFree(function* () {
   const i = yield* wrapM(get());
@@ -298,7 +302,7 @@ const test = doFree(function* () {
   const j = yield* wrapM(get());
   yield put(j + 1);
   const k = yield get();
-  return k
+  return k;
 });
 
 console.log(runNumState(someComputation(), 0));
@@ -309,3 +313,61 @@ console.log(runNumState(test, 5));
 
 export { runNumState, someComputation };
 // type NumState = State<number>;
+
+type FFree<F extends Tags, A, X = any> =
+  | { tag: "FPure"; val: A; [HIDDEN_TYPE_TAG]: F }
+  | { tag: "FImpure"; val: Functor<F, X>; k: ((a: X) => FFree<F, A>); [HIDDEN_TYPE_TAG]: F };
+
+const FPure = <F extends FunctorTag, A>(val: A): FFree<F, A> => {
+  return { tag: "FPure", val, [HIDDEN_TYPE_TAG]: void 0 as any };
+};
+
+const FImpure = <F extends FunctorTag, X, A>(
+  val: Functor<F, X>,
+  k: ((a: X) => FFree<F, A>)
+): FFree<F, A> => {
+  return { tag: "FImpure", val, k, [HIDDEN_TYPE_TAG]: void 0 as any };
+};
+
+/*
+
+data FReaderWriter i o x where
+Get :: FReaderWriter i o i
+Put :: o → FReaderWriter i o ()
+
+*/
+
+type FReaderWriterF<I, O, X> = {
+  tag: "Get";
+  map: <B>(f: (a: I) => B) => FReaderWriterF<I, O, B>;
+} | {
+  tag: "Put";
+  val: O;
+  // k: () => FReaderWriterF<I, O, B>
+  map: <B>(f: (a: void) => B) => FReaderWriterF<I, O, B>;
+};
+
+/*
+instance Monad (FFree f) where ...
+Impure fx k’ >>= k = Impure fx (k’ >> k)
+*/
+
+/*
+(>>>) :: Monad m ⇒ (a → m b) → (b → m c) → (a → m c)
+f >>> g = (>>= g) . f
+*/
+
+const kleisli = <F extends FunctorTag, A, B, C>(f: (a: A) => FFree<F, B>, g: (b: B) => FFree<F, C>): ((a: A) => FFree<F, C>) => {
+  return (a) => bind2(f(a), g);
+}
+
+const bind2 = <F extends FunctorTag, A, B>(m: FFree<F, A>, k: (a: A) => FFree<F, B>): FFree<F, B> => {
+  switch (m.tag) {
+    case "FPure":
+      return k(m.val);
+    case "FImpure": {
+      const k$ = m.k;
+      return FImpure(m.val, kleisli(k$, k));
+    }
+  }
+}
