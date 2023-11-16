@@ -231,7 +231,7 @@ type EffState<S, A> = FFree<"StateEff", A, [S]>;
 
 type ChooseEff<X> =
   | { tag: "Choose"; val: X[]; resume: X }
-  | { tag: "Assert"; val: boolean; resume: null };
+  | { tag: "Assert"; val: boolean; resume: null[] };
 
 type Test = EffState<number, null>;
 type Test2 = NumEffState<null>;
@@ -293,13 +293,17 @@ const unEffState = <A>(state: StateEff<number, A>, s: number): [A, number] => {
   }
 };
 
+const lbind = <A, B>(m: A[], f: (a: A) => B[]): B[] => {
+  return m.flatMap(f);
+}
+
 const runEffChoose = <A>(state: EffChoose<A>): A[] => {
   switch (state.tag) {
     case "FPure":
       return [state.val];
     case "FImpure": {
       const xs = unEffChoose(state.val);
-      return xs.flatMap((x) => runEffChoose(state.k(x)));
+      return lbind(xs, (x) => runEffChoose(state.k(x)));
     }
   }
 };
@@ -323,15 +327,17 @@ const chooseEff = <A>(xs: A[]): EffChoose<A> => {
 };
 
 const assertEff = (b: boolean): EffChoose<null> => {
-  return etaF({ tag: "Assert", val: b, resume: null });
+  return etaF({ tag: "Assert", val: b, resume: null as any as null[] });
 };
 
 const testComputationL = (): EffChoose<number> => {
   // return bind(chooseEff([1, 2, 3]), (x) =>
   //   bind(FPure(x + 3), (i) => bind(assertEff(i > 4), () => FPure(i)))
   // );
-    return bind(chooseEff([1, 2, 3]), (x) =>
-    bind(FPure(x + 3), (i) => bind(assertEff(i > 4), () => FPure(i)))
+  return bind(chooseEff([1, 2, 3]), (x) =>
+    bind(chooseEff([2, 4, 6]), (y) =>
+      bind(FPure(x + y), (i) => bind(assertEff(i > 4), () => FPure(i)))
+    )
   );
   // .bind((i) => assertEff(i > 4))
   // .bind((i) => FPure(i))
@@ -378,21 +384,36 @@ const testComputationEff2 = (): EffState<string, null> => {
 
 console.log(runEffState$(testComputationEff2(), "there"));
 
+type Continuaton<K, R> = (x: K) => R;
+
+type Handler2<
+  E extends Effect<string, any, any>,
+  Effects extends Effect<string, any, any>,
+  Result
+> = (k: Continuaton<[E["resume"], Partial<Handlers<Effects, Result>>], Result>, v: E["val"]) => Result;
+
 type Handler<
   E extends Effect<string, any, any>,
-  Effects extends Effect<string, any, any>
-> = (e: E["val"]) => [E["resume"], Partial<Handlers<Effects>>];
+  Effects extends Effect<string, any, any>,
+  Result
+> = (e: E["val"]) => [E["resume"], Partial<Handlers<Effects, Result>>];
 
-type Handlers<Effects extends Effect<string, any, any>> = {
+type Handlers<Effects extends Effect<string, any, any>, Result> = {
   [tag in Effects["tag"]]: Handler<
     Extract<Effects, Effect<tag, any, any>>,
-    Effects
+    Effects,
+    Result
   >;
-};
+}
+// } & {
+//   return: (t: T) => Result;
+// };
 
 const handle = <
   Effects extends Effect<string, any, any>,
-  H extends Handlers<Effects>
+  H extends Handlers<Effects, Return>,
+  T,
+  Return
 >(
   effect: Effects,
   handlers: H
@@ -402,17 +423,22 @@ const handle = <
   return [res, newHandlers];
 };
 
-const runTask = <Effects extends Effect<string, any, any>, Result>(
-  state: EffTask<Effects, Result>,
-  handlers: Handlers<Effects>
+// const run
+
+const runTask = <Effects extends Effect<string, any, any>, Handle extends Handlers<Effects, Result>, Result>(
+  task: EffTask<Effects, Result>,
+  handlers: Handle
 ): Result => {
-  switch (state.tag) {
+  switch (task.tag) {
     case "FPure":
-      return state.val;
+      return task.val;
     case "FImpure": {
-      const [x, handlers$] = handle(state.val, handlers);
+      const k = (x: Effects["resume"], handlers$: Handle) => {
+        return runTask(task.k(x), handlers);
+      }
+      const [x, handlers$] = handle(task.val, handlers as any);
       // const task = state.val
-      return runTask(state.k(x), handlers$); // as any;
+      return runTask(task.k(x), handlers$); // as any;
     }
   }
 };
@@ -440,10 +466,15 @@ const testComputationEff3 = (): EffTask<
   return test;
 };
 
-const handlerState = <T>(s: T): Handlers<Read<T> | Write<T>> => ({
+const handlerState = <T>(s: T): Handlers<Read<T> | Write<T>, T> => ({
   read: () => [s, handlerState(s)],
   write: (s) => [null, handlerState(s)],
 });
+
+// const handlerState = <T>(s: T): Handlers<Read<T> | Write<T>> => ({
+//   read: () => [s, handlerState(s)],
+//   write: (s) => [null, handlerState(s)],
+// });
 
 console.log(runTask(testComputationEff3(), handlerState("there")));
 
@@ -468,3 +499,12 @@ data Lang r where
 type Lang<R> = { tag: "LReturn"; val: number } | { tag: "LPrint"; val: null };
 
 export {};
+
+type Eff<R, A> = unknown
+const run = <W>(eff: Eff<void, W>): W => {
+  return eff as any;
+}
+
+// const send_req = <A, R>(f: (s: Suspension<A>) => Request): Eff<R, A> => {
+//   return f as any;
+// }
