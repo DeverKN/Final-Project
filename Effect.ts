@@ -123,8 +123,8 @@ type EffState s = FFree (StateEff s)
 
 export type Effect<Tag, V, R> = { tag: Tag; val: V; resume: R };
 
-export type Task<Effects extends Effect<String, any, any>, Result> = any;
-export type EffTask<Effects extends Effect<String, any, any>, Result> = FFree<
+export type Task<Effects extends Effect<string, any, any>, Result> = any;
+export type EffTask<Effects extends Effect<string, any, any>, Result> = FFree<
   "Task",
   Result,
   [Effects]
@@ -149,17 +149,45 @@ unEffState Get s     = (s,s)
 unEffState (Put s) _ = ((),s)
 */
 
-type Continuaton<K, R> = (x: K) => R;
+type Continuation<K, R> = (x: K) => R;
+export type EffectContinuation<
+  E extends Effect<string, any, any>,
+  Effects extends Effect<string, any, any>,
+  T,
+  Result
+> = Continuation<[E["resume"], Partial<Handlers<Effects, T, Result>>], Result>;
+export type PartialEffectContinuation<
+  E extends Effect<string, any, any>,
+  Effects extends Effect<string, any, any>,
+  T,
+  Result
+> = Continuation<
+  [E["resume"], PartialHandlers<Effects, T, Result>],
+  EffTask<Effect<any, any, any>, Result>
+>;
 
 export type Handler<
   E extends Effect<string, any, any>,
   Effects extends Effect<string, any, any>,
   T,
   Result
-> = (
-  k: Continuaton<[E["resume"], Partial<Handlers<Effects, T, Result>>], Result>,
-  v: E["val"]
-) => Result;
+> = E["val"] extends void
+  ? (k: EffectContinuation<E, Effects, T, Result>) => Result
+  : (k: EffectContinuation<E, Effects, T, Result>, ...v: E["val"]) => Result;
+
+export type PartialHandler<
+  E extends Effect<string, any, any>,
+  Effects extends Effect<string, any, any>,
+  T,
+  Result
+> = E["val"] extends void
+  ? (
+      k: PartialEffectContinuation<E, Effects, T, Result>
+    ) => EffTask<Effect<any, any, any>, Result>
+  : (
+      k: PartialEffectContinuation<E, Effects, T, Result>,
+      ...v: E["val"]
+    ) => EffTask<Effect<any, any, any>, Result>;
 
 export type Handlers<Effects extends Effect<string, any, any>, T, Result> = {
   [tag in Effects["tag"]]: Handler<
@@ -172,8 +200,12 @@ export type Handlers<Effects extends Effect<string, any, any>, T, Result> = {
   return: (t: T) => Result;
 };
 
-type PartialHandlers<Effects extends Effect<string, any, any>, T, Result> = Partial<{
-  [tag in Effects["tag"]]: Handler<
+export type PartialHandlers<
+  Effects extends Effect<string, any, any>,
+  T,
+  Result
+> = Partial<{
+  [tag in Effects["tag"]]: PartialHandler<
     Extract<Effects, Effect<tag, any, any>>,
     Effects,
     T,
@@ -208,8 +240,11 @@ export const runTask = <
         return runTask(task.k(x), newHandlers as any);
       };
 
-      // console.log(task.val);
-      return handlers[task.val.tag as Effects["tag"]](k as any, task.val.val);
+      // console.log("task", task);
+      return handlers[task.val.tag as Effects["tag"]](
+        k as any,
+        ...task.val.val
+      );
     }
   }
 };
@@ -230,23 +265,29 @@ export const runTask = <
 // };
 
 export const taskDo = <
-  TArgs extends any[],
   Gen extends Generator<EffTask<Effect<string, any, any>, any>, any, any>
 >(
-  gen: (
-    ...args: TArgs
-  ) => Gen
-) => (...args: TArgs): (Gen extends Generator<EffTask<infer Effects, any>, infer T, any> ? EffTask<Effects, T> : never) => {
+  gen: () => Gen
+): Gen extends Generator<EffTask<infer Effects, any>, infer T, any>
+  ? EffTask<Effects, T>
+  : never => {
   const immut = immutagen(gen);
-  const res = (...args: any[]) => {
-    const { value, next } = immut(...args);
-    if (!next) {
-      return FPure(value);
-    } else {
-      return bind(value, taskDoHelper(next));
-    }
-  };
-  return res as any
+  const { value, next } = immut();
+  if (!next) {
+    return FPure(value) as any;
+  } else {
+    return bind(value, taskDoHelper(next)) as any;
+  }
+};
+
+export const typedTaskDo = <
+  Gen extends Generator<EffTask<Effect<string, any, any>, any>, any, any>
+>(
+  gen: () => Gen
+): Gen extends Generator<EffTask<infer Effects, any>, infer T, any>
+  ? TypedEffTask<Effects, T>
+  : never => {
+  return w(taskDo(gen)) as any;
 };
 
 const taskDoHelper = <Effects extends Effect<string, any, any>, T>(
@@ -262,14 +303,33 @@ const taskDoHelper = <Effects extends Effect<string, any, any>, T>(
   };
 };
 
+export type TypedEffTask<E extends Effect<string, any, any>, R> = Generator<
+  EffTask<E, R>,
+  R,
+  any
+>;
 export const wrapEff = <E extends Effect<any, any, any>, R>(
   t: EffTask<E, R>
-): Generator<EffTask<E, R>, R, any> => {
+): TypedEffTask<E, R> => {
   return (function* (): Generator<EffTask<E, R>, R, any> {
     const val = yield t;
     return val;
   })();
 };
+
+export type GetResult<Handle extends PartialHandlers<any, any, any>> =
+  ReturnType<Handle["return"]>;
+// type GetResult<Handle extends PartialHandlers<any, any, any>> =
+//   Handle extends PartialHandlers<any, any, infer Result> ? Result : never;
+type FallThroughTask<
+  Effects extends Effect<string, any, any>,
+  Handle extends PartialHandlers<Effects, T, any>,
+  T
+> = EffTask<
+  Exclude<Effects, Extract<Effects, Effect<keyof Handle, any, any>>>,
+  GetResult<Handle>
+>;
+// type Get
 
 export const handle = <
   Effects extends Effect<string, any, any>,
@@ -279,38 +339,60 @@ export const handle = <
 >(
   task: EffTask<Effects, T>,
   handlers: Handle
-): Handle extends PartialHandlers<Effects, T, infer Result> ? (EffTask<Exclude<Effects, Extract<Effects, Effect<keyof Handle, any, any>>>, Result>) : never => {
+): EffTask<
+  Exclude<Effects, Extract<Effects, Effect<keyof Handle, any, any>>>,
+  GetResult<Handle>
+> => {
   // console.log("task", task);
   switch (task.tag) {
     case "FPure":
       return FPure(handlers.return(task.val)) as any;
     case "FImpure": {
       const k = (
-        v: [
-          x: Effects["resume"],
-          handlers$: Partial<Handlers<Effects, T, any>>
-        ]
+        v: [x: Effects["resume"], handlers$: Partial<Handlers<Effects, T, any>>]
       ) => {
         const [x, handlers$] = v;
         const newHandlers: Handle = { ...handlers, ...handlers$ };
-        return runTask(task.k(x), newHandlers as any);
+        return handle(task.k(x), newHandlers as any);
       };
 
       if (task.val.tag in handlers) {
-        return (handlers[task.val.tag as Effects["tag"]] as any)(k as any, task.val.val);
+        // console.log("handled", task.val.tag);
+        return (handlers[task.val.tag as Effects["tag"]] as any)(
+          k as any,
+          ...task.val.val
+        );
       } else {
-        return FImpure(task.val.val, task.val.k) as any;
+        const k$ = (v: any): FFree<"Task", T, [Effects], any> => {
+          return handle(task.k(v), handlers) as any;
+        };
+        return FImpure(task.val, k$) as any;
       }
     }
   }
 };
 
-export const eff = <E extends Effect<any, any, any>>(tag: E["tag"]): E["val"] extends void ? (() => EffTask<E, E["resume"]>) : ((v: E["val"]) => EffTask<E, E["resume"]>) => {
-  const e = (v: E["val"]) => etaF({ tag: tag, val: v, resume: null as E["resume"] })
+export const eff = <E extends Effect<any, any, any>>(
+  tag: E["tag"]
+): E["val"] extends void
+  ? () => EffTask<E, E["resume"]>
+  : (...v: E["val"]) => EffTask<E, E["resume"]> => {
+  const e = (...v: E["val"]) =>
+    etaF({ tag: tag, val: v, resume: null as E["resume"] });
   return e as any;
-}
-// const amb = <T>(vs: T[]): EffTask<AMB<T>, T> => {
+};
 
-export const run = <T>(task: EffTask<never, T>): T => runTask(task, {return: (v) => v});
+export const typedEff = <E extends Effect<any, any, any>>(
+  tag: E["tag"]
+): E["val"] extends void
+  ? () => TypedEffTask<E, E["resume"]>
+  : (...v: E["val"]) => TypedEffTask<E, E["resume"]> => {
+  const e = (...v: E["val"]) =>
+    w(etaF({ tag: tag, val: v, resume: null as E["resume"] }));
+  return e as any;
+};
+
+export const run = <T>(task: EffTask<never, T>): T =>
+  runTask(task, { return: (v) => v });
 
 export const w = wrapEff;
