@@ -27,11 +27,22 @@ type Timeout = Effect<"timeout", [ms: number], boolean>;
 // type GetUUID = Effect<"getUUID", void, string>;
 type GetNamed<T> = Effect<"get", [name: string, val: T], T>;
 type SetNamed<T> = Effect<"set", [name: string, val: T], void>;
+type Await<T> = Effect<"await", [promise: Promise<T>], T>;
 
-type NameToken = symbol
+type NameToken = symbol;
+type StateAnchor = Effect<"stateAnchor", void, void>;
+type EndStateAnchor = Effect<"endStateAnchor", void, void>;
 type Ref<T> = Effect<"ref", [val: T], NameToken>;
 type SetRef<T> = Effect<"setRef", [token: NameToken, val: T], void>;
 type GetRef<T> = Effect<"getRef", [token: NameToken], T>;
+
+const ref = <T>(v: T) => eff<Ref<T>>("ref")(v);
+const setRef = <T>(token: NameToken, v: T) =>
+  eff<SetRef<T>>("setRef")(token, v);
+const getRef = <T>(token: NameToken) => eff<GetRef<T>>("getRef")(token);
+const stateAnchor = () => eff<StateAnchor>("stateAnchor")();
+const endStateAnchor = () => eff<EndStateAnchor>("endStateAnchor")();
+// const await = <T>(p: Promise<T>) => eff<Await<T>>("await")(p);
 
 // const getUUID = eff<GetUUID>("getUUID")();
 const getNamed = <T>(name: string, v: T) => eff<GetNamed<T>>("get")(name, v);
@@ -245,6 +256,25 @@ const runTimeout = <T>(t: EffTask<Timeout, T>): Observable<T> => {
   };
   return runTask(t, handle);
 };
+
+const handleTimeout = <T>(): PartialHandlers<Timeout, T, Observable<T>> => ({
+  timeout: (k, interval) => {
+    // const obs = k([false, handleTimeout()]);
+    // setTimeout(() => {
+    //   forwardObservable(k([true, handleTimeout()]), obs);
+    // }, interval);
+    return taskDo(function* () {
+      const obs = yield k([false, handleTimeout()]);
+      // yield* w(timeout(interval));
+      const newObs = yield k([true, handleTimeout()])
+      forwardObservable(newObs, obs);
+      return obs
+    });
+  },
+  return: (v) => new Observable(v),
+});
+
+
 
 // handleTimeout = <T>(): PartialHandlers<Timeout, T, Observable<T>> => ({
 //   timeout: (k, interval) => {
@@ -542,6 +572,69 @@ const stateTaskTest = () =>
     return `count is ${count}, msg is ${msg}`;
   });
 
+// const handleRef = <T, R>(
+//   s: Record<symbol, T>
+// ): PartialHandlers<Ref<T> | GetRef<T> | SetRef<T>, R, R> => ({
+//   ref: (k, v) => {
+//     const token = Symbol();
+//     return k([token, handleRef({ ...s, [token]: v })]);
+//   },
+//   getRef: (k, token) => {
+//     return k([s[token], handleRef(s)]);
+//   },
+//   setRef: (k, token, v) => {
+//     return k([void 0, handleRef({ ...s, [token]: v })]);
+//   },
+//   return: (v) => v,
+// });
+
+const handleRef2 = <T, R>(
+  s: Record<symbol, T>,
+  k$: any = null,
+  rerun: boolean = false,
+  oldCache: symbol[] | null = null,
+  newCache: symbol[] = []
+): PartialHandlers<Ref<T> | GetRef<T> | SetRef<T> | StateAnchor | EndStateAnchor, R, R> => ({
+  ref: (k, v) => {
+    if (oldCache) {
+      const token = oldCache!.pop()!;
+      return k([token, handleRef2(s, k$, rerun, oldCache, [token, ...newCache])]);
+    } else {
+      const token = Symbol()
+      return k([token, handleRef2({ ...s, [token]: v }, k$, rerun, oldCache, [token, ...newCache])]);
+    }
+  },
+  getRef: (k, token) => {
+    return k([s[token], handleRef2(s, k$, rerun, oldCache, newCache)]);
+  },
+  setRef: (k, token, v) => {
+    return k([void 0, handleRef2({ ...s, [token]: v }, k$, true, oldCache, newCache)]);
+  },
+  stateAnchor: (k) => {
+    return k([void 0, handleRef2(s, k, false, oldCache, newCache)]);
+  },
+  endStateAnchor: (k) => {
+    if (rerun) {
+      return k$([void 0, handleRef2(s, k$, false, newCache, [])]);
+    } else {
+      return k([void 0, handleRef2(s, k$, false, oldCache, newCache)]);
+    }
+  },
+  return: (v) => v,
+});
+
+const refTest = taskDo(function* () {
+  yield* w(stateAnchor());
+  const num = yield* w(ref<number>(0));
+  const name = yield* w(ref<string>("dever"));
+  if ((yield* w(getRef<number>(num))) < 21) {
+    yield* w(setRef(num, (yield* w(getRef<number>(num))) + 1));
+  }
+  yield* w(endStateAnchor());
+  return `name: ${yield* w(getRef<string>(name))} age: ${yield* w(getRef<number>(num))}`;
+});
+
+console.log(run(handle(refTest, handleRef2<number | string, string>({}))));
 // runTimeout(
 //   handle(stateTaskTest(), handleNamedState2<any, any>({ count: 0 }, {}))
 // ).subscribe({

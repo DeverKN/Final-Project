@@ -62,6 +62,8 @@ const kleisli = <F extends HKTTag, A, B, C>(
   return (a) => bind(f(a), g);
 };
 
+type MaybeAsync<F extends (...args: any) => any> = (...args: Parameters<F>) => Promise<ReturnType<F>> | ReturnType<F>;
+
 export const bind = <F extends HKTTag, A, B, X extends any[], Y extends any[]>(
   m: FFree<F, A, X>,
   k: (a: A) => FFree<F, B, Y>
@@ -122,6 +124,7 @@ type EffState s = FFree (StateEff s)
 */
 
 export type Effect<Tag, V, R> = { tag: Tag; val: V; resume: R };
+// export type NamedEffect<Name, Eff extends Effect<any, any, any>> = { name: Name, effect: Eff }
 
 export type Task<Effects extends Effect<string, any, any>, Result> = any;
 export type EffTask<Effects extends Effect<string, any, any>, Result> = FFree<
@@ -339,10 +342,7 @@ export const handle = <
 >(
   task: EffTask<Effects, T>,
   handlers: Handle
-): EffTask<
-  Exclude<Effects, Extract<Effects, Effect<keyof Handle, any, any>>>,
-  GetResult<Handle>
-> => {
+): (EffTask<Exclude<Effects, Extract<Effects, Effect<keyof Handle, any, any>>>, GetResult<Handle>>) => {
   // console.log("task", task);
   switch (task.tag) {
     case "FPure":
@@ -353,7 +353,13 @@ export const handle = <
       ) => {
         const [x, handlers$] = v;
         const newHandlers: Handle = { ...handlers, ...handlers$ };
-        return handle(task.k(x), newHandlers as any);
+        const res = handle(task.k(x), newHandlers as any);
+        if (res.tag === "FPure") {
+          return res.val
+        } else {
+
+        }
+        // return res
       };
 
       if (task.val.tag in handlers) {
