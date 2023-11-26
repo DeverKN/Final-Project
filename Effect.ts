@@ -353,12 +353,7 @@ export const handle = <
       ) => {
         const [x, handlers$] = v;
         const newHandlers: Handle = { ...handlers, ...handlers$ };
-        const res = handle(task.k(x), newHandlers as any);
-        if (res.tag === "FPure") {
-          return res.val
-        } else {
-
-        }
+        return handle(task.k(x), newHandlers as any);
         // return res
       };
 
