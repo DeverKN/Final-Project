@@ -62,7 +62,7 @@ const kleisli = <F extends HKTTag, A, B, C>(
   return (a) => bind(f(a), g);
 };
 
-type MaybeAsync<F extends (...args: any) => any> = (...args: Parameters<F>) => Promise<ReturnType<F>> | ReturnType<F>;
+// type MaybeAsync<F extends (...args: any) => any> = (...args: Parameters<F>) => Promise<ReturnType<F>> | ReturnType<F>;
 
 export const bind = <F extends HKTTag, A, B, X extends any[], Y extends any[]>(
   m: FFree<F, A, X>,
@@ -184,13 +184,8 @@ export type PartialHandler<
   T,
   Result
 > = E["val"] extends void
-  ? (
-      k: PartialEffectContinuation<E, Effects, T, Result>
-    ) => EffTask<Effect<any, any, any>, Result>
-  : (
-      k: PartialEffectContinuation<E, Effects, T, Result>,
-      ...v: E["val"]
-    ) => EffTask<Effect<any, any, any>, Result>;
+  ? (k: PartialEffectContinuation<E, Effects, T, Result>) => EffTask<Effect<any, any, any>, Result>
+  : (k: PartialEffectContinuation<E, Effects, T, Result>, ...v: E["val"]) => EffTask<Effect<any, any, any>, Result>;
 
 export type Handlers<Effects extends Effect<string, any, any>, T, Result> = {
   [tag in Effects["tag"]]: Handler<
@@ -271,9 +266,7 @@ export const taskDo = <
   Gen extends Generator<EffTask<Effect<string, any, any>, any>, any, any>
 >(
   gen: () => Gen
-): Gen extends Generator<EffTask<infer Effects, any>, infer T, any>
-  ? EffTask<Effects, T>
-  : never => {
+): (Gen extends Generator<EffTask<infer Effects, any>, infer T, any> ? EffTask<Effects, T> : never) => {
   const immut = immutagen(gen);
   const { value, next } = immut();
   if (!next) {
@@ -287,9 +280,7 @@ export const typedTaskDo = <
   Gen extends Generator<EffTask<Effect<string, any, any>, any>, any, any>
 >(
   gen: () => Gen
-): Gen extends Generator<EffTask<infer Effects, any>, infer T, any>
-  ? TypedEffTask<Effects, T>
-  : never => {
+): (Gen extends Generator<EffTask<infer Effects, any>, infer T, any> ? TypedEffTask<Effects, T> : never) => {
   return w(taskDo(gen)) as any;
 };
 
@@ -324,26 +315,19 @@ export type GetResult<Handle extends PartialHandlers<any, any, any>> =
   ReturnType<Handle["return"]>;
 // type GetResult<Handle extends PartialHandlers<any, any, any>> =
 //   Handle extends PartialHandlers<any, any, infer Result> ? Result : never;
-type FallThroughTask<
-  Effects extends Effect<string, any, any>,
-  Handle extends PartialHandlers<Effects, T, any>,
-  T
-> = EffTask<
-  Exclude<Effects, Extract<Effects, Effect<keyof Handle, any, any>>>,
-  GetResult<Handle>
->;
-// type Get
+// type FallThroughTask<
+//   Effects extends Effect<string, any, any>,
+//   Handle extends PartialHandlers<Effects, T, any>,
+//   T
+// > = EffTask<
+//   Exclude<Effects, Extract<Effects, Effect<keyof Handle, any, any>>>,
+//   GetResult<Handle>
+// >;
 
-export const handle = <
-  Effects extends Effect<string, any, any>,
-  Handle extends PartialHandlers<Effects, T, any>,
-  T
-  // Result
->(
+export const handle = <Effects extends Effect<string, any, any>, Handle extends PartialHandlers<Effects, T, any>, T>(
   task: EffTask<Effects, T>,
   handlers: Handle
 ): (EffTask<Exclude<Effects, Extract<Effects, Effect<keyof Handle, any, any>>>, GetResult<Handle>>) => {
-  // console.log("task", task);
   switch (task.tag) {
     case "FPure":
       return FPure(handlers.return(task.val)) as any;
@@ -353,12 +337,16 @@ export const handle = <
       ) => {
         const [x, handlers$] = v;
         const newHandlers: Handle = { ...handlers, ...handlers$ };
-        return handle(task.k(x), newHandlers as any);
-        // return res
+        const res = handle(task.k(x), newHandlers as any);
+        return res
+        // if (res.tag === "FPure") {
+        //   return res
+        // } else {
+        //   //TODO: something here
+        // }
       };
 
       if (task.val.tag in handlers) {
-        // console.log("handled", task.val.tag);
         return (handlers[task.val.tag as Effects["tag"]] as any)(
           k as any,
           ...task.val.val
@@ -397,3 +385,8 @@ export const run = <T>(task: EffTask<never, T>): T =>
   runTask(task, { return: (v) => v });
 
 export const w = wrapEff;
+
+type BoardTile = {
+  text: string;
+  color: "red" | "yellow" | "blue";
+}

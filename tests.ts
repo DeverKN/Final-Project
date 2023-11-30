@@ -14,6 +14,7 @@ import {
   PartialEffectContinuation,
   EffectContinuation,
   TypedEffTask,
+  FImpure,
 } from "./Effect";
 import { Observable, forwardObservable } from "./Observable";
 
@@ -42,7 +43,7 @@ const setRef = <T>(token: NameToken, v: T) =>
 const getRef = <T>(token: NameToken) => eff<GetRef<T>>("getRef")(token);
 const stateAnchor = () => eff<StateAnchor>("stateAnchor")();
 const endStateAnchor = () => eff<EndStateAnchor>("endStateAnchor")();
-// const await = <T>(p: Promise<T>) => eff<Await<T>>("await")(p);
+const wait = <T>(p: Promise<T>) => eff<Await<T>>("await")(p);
 
 // const getUUID = eff<GetUUID>("getUUID")();
 const getNamed = <T>(name: string, v: T) => eff<GetNamed<T>>("get")(name, v);
@@ -358,14 +359,6 @@ const r2 = handle(
   trueChoice<Maybe<("Heads" | "Tails" | undefined)[]>>()
 );
 
-// const testH = allChoices<("Heads" | "Tails" | undefined)[]>();
-// // type GetResult2<T exgt =
-// // type Res = GetResult2<typeof testH>
-
-// const test = handle(
-//   drunkTosses(2),
-//   allChoices<("Heads" | "Tails" | undefined)[]>()
-// );
 const r3 = handle(
   handle(drunkTosses(2), allChoices<("Heads" | "Tails" | undefined)[]>()),
   maybeFail<("Heads" | "Tails" | undefined)[][]>()
@@ -414,7 +407,6 @@ const renderer = (
       k([true, renderer(s, k$)]).subscribe({
         update: (data) => obs.update(data),
       });
-      // forwardObservable(newO, obs);
     }, timeout);
     return obs;
   },
@@ -432,7 +424,6 @@ const stateTask = () =>
         })
       )
     );
-    // if (i != 0) yield* w(set(count + 1));
     return `count is ${count}`;
   });
 
@@ -444,109 +435,6 @@ const doInterval = <Effects extends Effect<string, any, any>, T>(
     let b = yield* timeout(interval);
     if (b) yield* w(t);
   });
-
-const h = <Effects extends Effect<any, any, any>>(
-  tag: string,
-  props: Partial<EventHandlers<Effects>> & Partial<PropNames>,
-  children: JSF<Effects>[]
-): JSF<Effects> => {
-  return {
-    tag,
-    props,
-    children,
-  };
-};
-
-type EventTypes = {
-  click: any;
-  change: any;
-};
-
-type EventNames = keyof EventTypes;
-type EventHandler<
-  Effects extends Effect<any, any, any>,
-  EventName extends EventNames
-> = (event: EventTypes[EventName]) => EffTask<Effects, void>;
-type EventHandlers<Effects extends Effect<any, any, any>> = {
-  [eventName in EventNames as `on${Capitalize<eventName>}`]: EventHandler<
-    Effects,
-    eventName
-  >;
-};
-
-type PropNames = {
-  class: string;
-};
-
-type JSF<Effects extends Effect<any, any, any>> =
-  | {
-      tag: string;
-      props: Partial<EventHandlers<Effects>> & Partial<PropNames>;
-      children: JSF<Effects>[];
-    }
-  | string
-  | number;
-
-type HTML = string;
-const render = <Effects extends Effect<any, any, any>>(
-  html: JSF<Effects>
-): EffTask<Effects, HTML> => {
-  return taskDo(function* () {
-    if (typeof html === "string" || typeof html === "number")
-      return String(html);
-    const tag = html.tag;
-    const props = html.props;
-    const children = html.children;
-    const renderedChildren = children.map(render);
-    let childrenHTML: string[] = [];
-    for (const child of renderedChildren) {
-      childrenHTML.push(yield* w(child));
-    }
-    let events = [];
-    const propsHTML = Object.entries(props)
-      .map(([k, v]) => {
-        if (k.startsWith("on")) {
-          const eventName = k.slice(2).toLowerCase() as EventNames;
-          const handler = v as EventHandler<Effects, EventNames>;
-          // return `on${eventName}="${v}"`;
-          events.push([eventName, v]);
-        } else {
-          return `${k}="${v}"`;
-        }
-      })
-      .join(" ");
-    return `<${tag}${propsHTML}>${childrenHTML.join("")}</${tag}>`;
-  });
-};
-const counter = () =>
-  taskDo(function* () {
-    let count = yield* get<number>();
-    const increment = () =>
-      taskDo(function* () {
-        yield* set<number>(count + 1);
-      });
-    const decrement = () =>
-      taskDo(function* () {
-        yield* set<number>(count - 1);
-      });
-    // yield* w(doInterval(increment));
-    // yield* w(doInterval(increment));
-    return render(
-      h("div", {}, [
-        h("button", { onClick: increment }, ["-"]),
-        h("span", {}, [count]),
-        h("button", { onClick: decrement }, ["+"]),
-      ])
-    );
-  });
-
-// const res = runTimeout(
-//   handle(counter(), handleState2<number, JSF<Set<number>>>(0, null as any))
-// );
-// const res: Observable<string> = runTask(stateTask(), render(0, null as any));
-// res.subscribe({
-//   update: (data) => console.log(data),
-// });
 
 const stateTaskTest = () =>
   taskDo(function* () {
@@ -568,25 +456,8 @@ const stateTaskTest = () =>
         })
       )
     );
-    // if (i != 0) yield* w(set(count + 1));
     return `count is ${count}, msg is ${msg}`;
   });
-
-// const handleRef = <T, R>(
-//   s: Record<symbol, T>
-// ): PartialHandlers<Ref<T> | GetRef<T> | SetRef<T>, R, R> => ({
-//   ref: (k, v) => {
-//     const token = Symbol();
-//     return k([token, handleRef({ ...s, [token]: v })]);
-//   },
-//   getRef: (k, token) => {
-//     return k([s[token], handleRef(s)]);
-//   },
-//   setRef: (k, token, v) => {
-//     return k([void 0, handleRef({ ...s, [token]: v })]);
-//   },
-//   return: (v) => v,
-// });
 
 const handleRef2 = <T, R>(
   s: Record<symbol, T>,
@@ -634,9 +505,10 @@ const refTest = taskDo(function* () {
   return `name: ${yield* w(getRef<string>(name))} age: ${yield* w(getRef<number>(num))}`;
 });
 
+const fetchTest = taskDo(function* () {
+  const res = yield* w(wait(fetch("https://jsonplaceholder.typicode.com/todos/1")));
+  const json = yield* w(wait(res.json()));
+  return json.title as string
+})
+
 console.log(run(handle(refTest, handleRef2<number | string, string>({}))));
-// runTimeout(
-//   handle(stateTaskTest(), handleNamedState2<any, any>({ count: 0 }, {}))
-// ).subscribe({
-//   update: (data) => console.log(data),
-// });
