@@ -239,7 +239,7 @@ data FFree g a where
        FImpure :: g x -> (x -> FFree g a) -> FFree g a
 ```
 
-and here is the equivalent version in TypeScript
+and here is the equivalent version in TypeScript (it's a bit more complicated but it's basically equivalent)
 
 ```ts
 type FFree<F extends HKTTag, A, ParamTypes extends any[] = [], X = any> =
@@ -254,29 +254,87 @@ type FFree<F extends HKTTag, A, ParamTypes extends any[] = [], X = any> =
     };
 ```
 
+The Free-er Monad has two constructors. FPure which holds Pure values, and FImpure which stores an impure value container (in our case this is an effect) and a continuation that represents what to do with that effect. When you run a task whenever it encounters a FImpure it tags the effect in it, looks at it's name to find the right handler. When the handler calls the continuation that value is passed to the contination FImpure and the result is handled in the same way. This continues until and FPure is reached. This represents the end of the task. This value is passed to the `return` handler to get the final result.
 
 ### Do-Notation
 
-#### How do generators
+#### How generators
 
-#### Why do I need `yield*` ?
+Note: For a much more in depth explanation check out the paper [Yield: Mainstream Delimited Continuations](http://parametricity.net/dropbox/yield.subc.pdf) which was the inspiration for all of this
 
-## Differences between TypeScript and Haskell
+Generators are a JavaScript feature that are designed to represent a lazy stream of values. When you call `.next()` on a generator it runs the generator until it reaches a `yield` statement, returns the yielded value and pauses the generator until next is called again. If this was all generators could do then they wouldn't be very useful to us. However, in addition to getting values out of generator you can also pass values back into a generator. If you do `.next("foo")` then the value "foo" will be passsed back into the generator at the point where yield was called. For example:
 
-### TS-Pros:
+```ts
+const gen = function* () {
+  let four = yield 2
+  //  yield replaced with the value passed to next (in this case 4) thus,
+  //  four = 4
+  //  as it should!
+  return four + 5
+}
 
-1. Open unions/Structural typing
-2. Gradual Typing
+const instance = gen()
 
-### TS-Cons:
+let val = instance.next()
+let result = instance.next(val * 2)
+//  result = 9
+```
 
-1. Lack of Proper do-notation
-2. Weaker Type System
+You can think of `yield` as suspending a function at a point in time and `.next()` as _continuing_ it with a specific value. For those of you familiar with CPS this should set off alarm bells. Basically `yield` allows you to create a continuation at any point in (generator) function. We can use these continuation to serve as the second part of `bind` by creating a function that wraps `.next()`. This is the basis behind the do-notation.
+
+There is however one issue, calling `.next()` on a generator permanently mutates it. Once you've called `.next()` calling `.next()` again will instead refer to the next `yield` statement. This means that the continuations from this are single-shot, which is not sufficient for our use case.
+
+Fortunately, there is a solution. If you store the values that are passed into the generator you can "replay" the generator up to a specific point in time by calling `.next()` with the stored values. This allows you to resume a generator from the same point multiple times. Fortunately there's a library that implements this called [immutagen](https://github.com/pelotom/immutagen). The creator of this library also created another library based on it called [burrido](https://github.com/pelotom/burrido) which uses generators for do-notation in JavaScript which was the inspiration for my implementation here.
+
+#### Why do I need `yield*` and `w` ?
+
+This is due to the limitations of how TypeScript handles generators. The type for generators in TypeScript is `Generator<YieldType, ResumeType, ReturnType>` where `YieldType` is the type of things it yields, `ResumeType` is the type that `yield` statements are resumed with and `ReturnType` is the final return type. This means that every `yield` must be resumed with the same type which poses a problem when dealing with effects with different return types. Fortunately, there is a solution `yield*` takes another generator yields through all it's values and returns it's final result. Here's an example of it in action:
+
+```ts
+const stringGen: Generator<..., ..., string> = ...
+let str = yield* stringGen
+//  ^string
+const numberGen: Generator<..., ..., number> = ...
+let num = yield* numberGen
+//  ^number
+```
+
+as you can see this solves the problem of differing yield types. The job of `w` is to convert a `Task<E, T>` to a `Generator<E, ..., T>` which is actually a very simple process. Combining these two allows for full type inference with effects.
+## Benefits of working with TypeScript
+
+There are a couple of TypeScript features that made implementing this in TypeScript easier than the Haskell implementation. 
+
+The biggest is open unions. In Haskell once you've declared a union there's no way to expand it. In TypeScript you can easily create a new union with elements from an old one and new elements. Example:
+
+```ts
+type Pets = Dog | Cat
+type EvenMorePets = Pets | Sloth | Lemur 
+```
+This makes it much easier to implement the effect list for tasks.
 
 ## Future Steps/Open Issues
 
 ### Partial Handler Type Inference
+As I mentioned above, partial handler need to specify their input and ouput type and they should be polymorphic on their input type. This means that using a partial handler you have to specify the type of the input which is tedious. I think there's probably a way to infer the type or otherwise get around this limitation but I haven't yet been able to figure it out 
 
 ### Partial Handler handlers
+The other problem with partial handlers is that the results of the continuation are tasks rather than normal values. This means you have to use `bind` and do notation to work with them. This is annoying but it isn't a major issue. The bigger issue is that since they are monadic values they don't play nice with things like promises. There is definitely more expirimentation to be done here and I think it's the biggest rough edge with the current implementation.
 
-### Proper do notation for JavaScript
+### Proper Do notation for JavaScript
+Generators and and `yield` can do a convincing impression of do notation. However there are some rough edges. For one, having to wrap everthing in `taskDo(function* () { ... })` and `yield *` is tedious. But this mostly a syntax issue. The bigger problem is that `yield*` can only be used inside a generator function, it can't be used in a callback. This is why the code for `handleChoose` above has to use a loop rather than `flatMap` which would be much cleaner.
+
+```ts
+//Note: this doesn't work
+const handleChoose = <T>(): PartialHandlers<Choose<unknown>, T, T[]> => ({
+  choose: (k, options) => {
+    return taskDo(function* () {
+      return options.flatMap((option) => {
+        return yield* w(k(option)) //syntax error here
+      })
+    });
+  },
+  return: (v) => [v],
+});
+```
+
+## Bonus: Lying About Types for Fun and Profit
