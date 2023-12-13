@@ -337,4 +337,110 @@ const handleChoose = <T>(): PartialHandlers<Choose<unknown>, T, T[]> => ({
 });
 ```
 
-## Bonus: Lying About Types for Fun and Profit
+## Bonus Addendum: Lying About Types for Fun and Profit
+
+In the code for FFree this part might have caught your eye.
+```ts
+{
+  tag: "FImpure";
+  ...
+  [HIDDEN_TYPE_TAG]: F;
+};
+```
+This is needed so that TypeScript doesn't "forget" what `F` is. TypeScript uses structural typing. This means that types are compareed based on shape. This is pretty nice since it allows stuff like this to work:
+
+```ts
+type Dog = { name: string }
+
+const call = (pet: Dog) => {
+  console.log(`Here ${pet.name}!`)
+}
+
+call({name: "fido"})
+```
+
+however it also means that if a type parameter isn't actually used in the body of the type it get forgotten. Which leads to the following
+
+```ts
+type Box<Name> = {
+  val: number
+}
+
+const box: Box<"chirstmas present"> = { val: 1 }
+const unwrap = (box: Box<"easter present">) => {
+  return box.val
+}
+
+unwrap(box)
+//This works just fine
+```
+
+To remedy this you have to store the type somewhere in the body of the type. For example you could make box
+```ts
+type Box<Name> = {
+  name: Name
+  val: number
+}
+```
+and easily solve your problem. The issue is that sometimes you need to store information about a type for something that doesn't exist. For example Effect types need to store what their resume value is, but since this value doesn't exist until they've been resumed there nothing to "put" there.
+
+```ts
+type Get = {
+  tag: "Get"
+  resumeType: number
+}
+
+const get = (): Get => {
+  return {
+    tag: "Get"
+    resumeType: ????
+  }
+}
+```
+
+the nice thing is that typescript let's you "lie" about types using any. With any you can pretend than any value has any type which lets you solve this issue. The following will typecheck just fine
+
+```ts
+type Get = {
+  tag: "Get"
+  resumeType: number
+}
+
+const get = (): Get => {
+  return {
+    tag: "Get"
+    resumeType: null as any
+  }
+}
+
+```
+
+the issue is that someone might try to access this field expecting a number but then instead they get null which can cause all sorts of type safety issues. The solution is to store the value but prevent users from accessing it. To do this we can use symbols. Symbols are special because a symbol is only equal to itself, there is no way to create new symbol that is equal to an old one
+
+```ts
+//Note: the string here is only for debugging purposes and doesn't actually effect anything, this could say bingo-bongo and it would work just the same
+const sym = Symbol("sym")
+sym === sym
+sym =/= Symbol("test")
+sym =/= Symbol("sym")
+```
+
+If you use a symbol to declare a field then the only way to access it is to use that same symbol, and if the symbol is never exported then there is no way for users to access the field, which solves our problem from above.
+
+```ts
+const ResumeType = Symbol("resumeType")
+type ResumeType = typeof ResumeType
+type Get = {
+  tag: "Get"
+  [ResumeType]: number
+}
+
+const get = (): Get => {
+  return {
+    tag: "Get"
+    [ResumeType]: null as any
+  }
+}
+```
+
+This pattern of storing type information hidden behind a symbol is used several times throughout this project including FFree and Effect as show above as well as when implementing mutable state in the tests. I like to call this lying about types but I think the official name is "phantom types"

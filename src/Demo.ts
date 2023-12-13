@@ -13,6 +13,10 @@ import {
   runTask,
 } from "./Effect";
 
+// Co-Pilot suggested this paper:
+// https://www.cs.indiana.edu/~sabry/papers/monadlib-abstract.pdf
+// which doesn't seem to exist lol
+
 type AMB<T> = Effect<"amb", [options: T[]], T>;
 type Choose = Effect<"choose", void, boolean>;
 type Fail = Effect<"fail", void, void>;
@@ -24,7 +28,7 @@ const amb = <T>(v: T[]) => w(eff<AMB<T>>("amb")(v));
 
 const handlerAMB = <T, R>(): Handlers<AMB<T>, R, R[]> => ({
   amb: (k, vs) => {
-    return vs.flatMap((v) => k([v, handlerAMB()]));
+    return vs.flatMap((v) => k(v, handlerAMB()));
   },
   return: (v) => [v],
 });
@@ -93,15 +97,15 @@ const maybeFail = <T>(): PartialHandlers<Fail, T, Maybe<T>> => ({
 });
 
 const trueChoice = <T>(): PartialHandlers<Choose, T, T> => ({
-  choose: (k) => k([true, trueChoice()]),
+  choose: (k) => k(true, trueChoice()),
   return: (v) => v,
 });
 
 const allChoices = <T>(): PartialHandlers<Choose, T, T[]> => ({
   choose: (k) => {
     return taskDo(function* () {
-      const l = yield* w(k([true, allChoices()]));
-      const r = yield* w(k([false, allChoices()]));
+      const l = yield* w(k(true, allChoices()));
+      const r = yield* w(k(false, allChoices()));
       return [...l, ...r];
     });
   },

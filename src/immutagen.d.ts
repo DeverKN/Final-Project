@@ -1,3 +1,4 @@
+//Types for the immutagen library since it wasn't written in TypeScript
 declare module "immutagen" {
   type ImmutaGenIterator<T, TReturn, TNext> = (...next: [TNext] | []) => ImmutaGen<T, TReturn, TNext>;
   

@@ -1,3 +1,4 @@
+// These are old tests
 import {
   EffTask,
   bind,
@@ -72,7 +73,7 @@ const timeout = (v: number) => w(eff<Timeout>("timeout")(v));
 
 const handlerAMB = <T, R>(): Handlers<AMB<T>, R, R[]> => ({
   amb: (k, vs) => {
-    return vs.flatMap((v) => k([v, handlerAMB()]));
+    return vs.flatMap((v) => k(v, handlerAMB()));
   },
   return: (v) => [v],
 });
@@ -192,15 +193,15 @@ const maybeFail = <T>(): PartialHandlers<Fail, T, Maybe<T>> => ({
 });
 
 const trueChoice = <T>(): PartialHandlers<Choose, T, T> => ({
-  choose: (k) => k([true, trueChoice()]),
+  choose: (k) => k(true, trueChoice()),
   return: (v) => v,
 });
 
 const allChoices = <T>(): PartialHandlers<Choose, T, T[]> => ({
   choose: (k) => {
     return taskDo(function* () {
-      const l = yield* w(k([true, allChoices()]));
-      const r = yield* w(k([false, allChoices()]));
+      const l = yield* w(k(true, allChoices()));
+      const r = yield* w(k(false, allChoices()));
       return [...l, ...r];
     });
   },
@@ -225,9 +226,9 @@ const runInterval = <T>(t: EffTask<Interval, T>): Observable<T> => {
   const handle: Handlers<Interval, T, Observable<T>> = {
     interval: (k, interval) => {
       let i = 0;
-      const obs = k([i++, handle]);
+      const obs = k(i++, handle);
       setInterval(() => {
-        forwardObservable(k([i++, handle]), obs);
+        forwardObservable(k(i++, handle), obs);
       }, interval);
       return obs;
     },
@@ -239,9 +240,9 @@ const runInterval = <T>(t: EffTask<Interval, T>): Observable<T> => {
 const runTimeout = <T>(t: EffTask<Timeout, T>): Observable<T> => {
   const handle: Handlers<Timeout, T, Observable<T>> = {
     timeout: (k, interval) => {
-      const obs = k([false, handle]);
+      const obs = k(false, handle);
       setTimeout(() => {
-        forwardObservable(k([true, handle]), obs);
+        forwardObservable(k(true, handle), obs);
       }, interval);
       return obs;
     },
@@ -257,9 +258,9 @@ const handleTimeout = <T>(): PartialHandlers<Timeout, T, Observable<T>> => ({
     //   forwardObservable(k([true, handleTimeout()]), obs);
     // }, interval);
     return taskDo(function* () {
-      const obs = yield k([false, handleTimeout()]);
+      const obs = yield k(false, handleTimeout());
       // yield* w(timeout(interval));
-      const newObs = yield k([true, handleTimeout()]);
+      const newObs = yield k(true, handleTimeout());
       forwardObservable(newObs, obs);
       return obs;
     });
@@ -279,14 +280,14 @@ const handleTimeout = <T>(): PartialHandlers<Timeout, T, Observable<T>> => ({
 // });
 
 const handleState = <T, R>(s: T): PartialHandlers<Get<T> | Set<T>, R, R> => ({
-  get: (k) => k([s, handleState(s)]),
-  set: (k, v) => k([void 0, handleState(v)]),
+  get: (k) => k(s, handleState(s)),
+  set: (k, v) => k(void 0, handleState(v)),
   return: (v) => v,
 });
 
 const handleStateFull = <T, R>(s: T): Handlers<Get<T> | Set<T>, R, R> => ({
-  get: (k) => k([s, handleStateFull(s)]),
-  set: (k, v) => k([void 0, handleStateFull(v)]),
+  get: (k) => k(s, handleStateFull(s)),
+  set: (k, v) => k(void 0, handleStateFull(v)),
   return: (v) => v,
 });
 
@@ -294,8 +295,8 @@ const handleState2 = <T, R>(
   s: T,
   k$: PartialEffectContinuation<Get<T>, Get<T> | Set<T>, R, R>
 ): PartialHandlers<Get<T> | Set<T>, R, R> => ({
-  get: (k) => k([s, handleState2(s, k)]),
-  set: (_, v) => k$([v, handleState2(v, k$)]),
+  get: (k) => k(s, handleState2(s, k)),
+  set: (_, v) => k$(v, handleState2(v, k$)),
   return: (v) => v,
 });
 
@@ -383,18 +384,18 @@ const renderer = (
   Observable<string>
 > => ({
   get: (k) => {
-    const obs = k([s, renderer(s, k)]);
+    const obs = k(s, renderer(s, k));
     return obs;
   },
   set: (_, v) => {
-    const obs = k$([v, renderer(v, k$)]);
+    const obs = k$(v, renderer(v, k$));
     return obs;
   },
   timeout: (k, timeout) => {
     // let i = 0;
-    const obs = k([false, renderer(s, k$)]);
+    const obs = k(false, renderer(s, k$));
     setTimeout(() => {
-      k([true, renderer(s, k$)]).subscribe({
+      k(true, renderer(s, k$)).subscribe({
         update: (data) => obs.update(data),
       });
     }, timeout);
@@ -463,38 +464,38 @@ const handleRef2 = <T, R>(
   ref: (k, v) => {
     if (oldCache) {
       const token = oldCache!.pop()!;
-      return k([
+      return k(
         token,
         handleRef2(s, k$, rerun, oldCache, [token, ...newCache]),
-      ]);
+      );
     } else {
       const token = Symbol();
-      return k([
+      return k(
         token,
         handleRef2({ ...s, [token]: v }, k$, rerun, oldCache, [
           token,
           ...newCache,
         ]),
-      ]);
+      );
     }
   },
   getRef: (k, token) => {
-    return k([s[token], handleRef2(s, k$, rerun, oldCache, newCache)]);
+    return k(s[token], handleRef2(s, k$, rerun, oldCache, newCache));
   },
   setRef: (k, token, v) => {
-    return k([
+    return k(
       void 0,
       handleRef2({ ...s, [token]: v }, k$, true, oldCache, newCache),
-    ]);
+    );
   },
   stateAnchor: (k) => {
-    return k([void 0, handleRef2(s, k, false, oldCache, newCache)]);
+    return k(void 0, handleRef2(s, k, false, oldCache, newCache));
   },
   endStateAnchor: (k) => {
     if (rerun) {
-      return k$([void 0, handleRef2(s, k$, false, newCache, [])]);
+      return k$(void 0, handleRef2(s, k$, false, newCache, []));
     } else {
-      return k([void 0, handleRef2(s, k$, false, oldCache, newCache)]);
+      return k(void 0, handleRef2(s, k$, false, oldCache, newCache));
     }
   },
   return: (v) => v,

@@ -85,6 +85,11 @@ const prettyPrint = <T extends Stringifiable>(m: Maybe<T>): string => {
   }
 };
 
+/*
+This demonstrates how the ordering of handlers effects their composition and ulitmately
+the final result
+*/
+
 describe("Drunk toss", () => {
   test("Choice then Maybe", () => {
     expect(
@@ -157,9 +162,12 @@ describe("Drunk toss", () => {
   });
 });
 
-type Increment = Effect<"increment", void, number>;
-const increment = eff<Increment>("increment");
+/*
 
+This implements mutable references in a way similar to the refs in languages like 
+oCaml. Unlike state from above it allows for multiple different references
+
+*/
 const SymbolForRefType = Symbol("RefType");
 type SymbolForRefType = typeof SymbolForRefType;
 type RefToken<T> = {
@@ -216,6 +224,9 @@ const handleState = <T>(s: number): PartialHandlers<Set | Get, T, T> => ({
   return: (v) => v,
 });
 
+/*
+Demonstration of bind and change syntax
+*/
 test("bind", () => {
   const bindTask = bind(get(), (v) =>
     bind(set(v + 2), () =>
