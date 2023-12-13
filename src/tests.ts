@@ -169,10 +169,6 @@ const drunkToss = () =>
     }
   });
 
-// type DrunkTosses = (
-//   n: number
-// ) => EffTask<Choose | Fail, ("Heads" | "Tails" | undefined)[]>;
-
 const drunkTosses = (
   n: number
 ): EffTask<Choose | Fail, ("Heads" | "Tails" | undefined)[]> =>
@@ -180,13 +176,9 @@ const drunkTosses = (
     if (n == 0) {
       return [];
     } else {
-      // const first = yield* w(drunkToss())
-      // const rest = (yield* w(drunkTosses(n - 1)))
-      const res: ("Heads" | "Tails" | undefined)[] = [
-        yield* w(drunkToss()),
-        ...(yield* w(drunkTosses(n - 1))),
-      ];
-      return res;
+      const first = yield* w(drunkToss());
+      const rest = yield* w(drunkTosses(n - 1));
+      return [first, ...rest] as ("Heads" | "Tails" | undefined)[];
     }
   });
 
@@ -267,15 +259,13 @@ const handleTimeout = <T>(): PartialHandlers<Timeout, T, Observable<T>> => ({
     return taskDo(function* () {
       const obs = yield k([false, handleTimeout()]);
       // yield* w(timeout(interval));
-      const newObs = yield k([true, handleTimeout()])
+      const newObs = yield k([true, handleTimeout()]);
       forwardObservable(newObs, obs);
-      return obs
+      return obs;
     });
   },
   return: (v) => new Observable(v),
 });
-
-
 
 // handleTimeout = <T>(): PartialHandlers<Timeout, T, Observable<T>> => ({
 //   timeout: (k, interval) => {
@@ -465,21 +455,37 @@ const handleRef2 = <T, R>(
   rerun: boolean = false,
   oldCache: symbol[] | null = null,
   newCache: symbol[] = []
-): PartialHandlers<Ref<T> | GetRef<T> | SetRef<T> | StateAnchor | EndStateAnchor, R, R> => ({
+): PartialHandlers<
+  Ref<T> | GetRef<T> | SetRef<T> | StateAnchor | EndStateAnchor,
+  R,
+  R
+> => ({
   ref: (k, v) => {
     if (oldCache) {
       const token = oldCache!.pop()!;
-      return k([token, handleRef2(s, k$, rerun, oldCache, [token, ...newCache])]);
+      return k([
+        token,
+        handleRef2(s, k$, rerun, oldCache, [token, ...newCache]),
+      ]);
     } else {
-      const token = Symbol()
-      return k([token, handleRef2({ ...s, [token]: v }, k$, rerun, oldCache, [token, ...newCache])]);
+      const token = Symbol();
+      return k([
+        token,
+        handleRef2({ ...s, [token]: v }, k$, rerun, oldCache, [
+          token,
+          ...newCache,
+        ]),
+      ]);
     }
   },
   getRef: (k, token) => {
     return k([s[token], handleRef2(s, k$, rerun, oldCache, newCache)]);
   },
   setRef: (k, token, v) => {
-    return k([void 0, handleRef2({ ...s, [token]: v }, k$, true, oldCache, newCache)]);
+    return k([
+      void 0,
+      handleRef2({ ...s, [token]: v }, k$, true, oldCache, newCache),
+    ]);
   },
   stateAnchor: (k) => {
     return k([void 0, handleRef2(s, k, false, oldCache, newCache)]);
@@ -502,13 +508,17 @@ const refTest = taskDo(function* () {
     yield* w(setRef(num, (yield* w(getRef<number>(num))) + 1));
   }
   yield* w(endStateAnchor());
-  return `name: ${yield* w(getRef<string>(name))} age: ${yield* w(getRef<number>(num))}`;
+  return `name: ${yield* w(
+    getRef<string>(name)
+  )} age: ${yield* w(getRef<number>(num))}`;
 });
 
 const fetchTest = taskDo(function* () {
-  const res = yield* w(wait(fetch("https://jsonplaceholder.typicode.com/todos/1")));
+  const res = yield* w(
+    wait(fetch("https://jsonplaceholder.typicode.com/todos/1"))
+  );
   const json = yield* w(wait(res.json()));
-  return json.title as string
-})
+  return json.title as string;
+});
 
 console.log(run(handle(refTest, handleRef2<number | string, string>({}))));

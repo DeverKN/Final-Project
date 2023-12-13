@@ -14,8 +14,8 @@ import {
   typedEff,
   typedTaskDo,
   w,
-} from "./Effect";
-import { Observable, forwardObservable } from "./Observable";
+} from "../src/Effect";
+import { Observable, forwardObservable } from "../src/Observable";
 
 type StateStart = Effect<"start", [], void>;
 type StateEnd = Effect<"end", [], void>;

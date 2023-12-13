@@ -1,6 +1,7 @@
 import { immutagen, ImmutaGenIterator, type ImmutaGen } from "immutagen";
 
 type Box<A> = { val: A };
+
 type HKTs<A, ParamTypes extends any[]> = {
   List: A[];
   Box: Box<A>;
@@ -78,11 +79,6 @@ export const bind = <F extends HKTTag, A, B, X extends any[], Y extends any[]>(
   }
 };
 
-/*
-etaF :: g a -> FFree g a
-etaF fa = FImpure fa FPure
-*/
-
 export const etaF = <F extends HKTTag, A, ParamTypes extends any[]>(
   fa: Apply<F, A, ParamTypes>
 ): FFree<F, A, ParamTypes> => {
@@ -123,8 +119,9 @@ data StateEff s x where
 type EffState s = FFree (StateEff s)
 */
 
-export type Effect<Tag, V, R> = { tag: Tag; val: V; resume: R };
-// export type NamedEffect<Name, Eff extends Effect<any, any, any>> = { name: Name, effect: Eff }
+const SymbolForResume = Symbol("SymbolForResume");
+type SymbolForResume = typeof SymbolForResume;
+export type Effect<Tag, V, R> = { tag: Tag; val: V; [SymbolForResume]: R };
 
 export type Task<Effects extends Effect<string, any, any>, Result> = any;
 export type EffTask<Effects extends Effect<string, any, any>, Result> = FFree<
@@ -153,21 +150,27 @@ unEffState (Put s) _ = ((),s)
 */
 
 type Continuation<K, R> = (x: K) => R;
+type TupleContinuation<K extends any[], R> = (...x: K) => R;
+
 export type EffectContinuation<
   E extends Effect<string, any, any>,
   Effects extends Effect<string, any, any>,
   T,
   Result
-> = Continuation<[E["resume"], Partial<Handlers<Effects, T, Result>>], Result>;
+> = (
+  val: E[SymbolForResume],
+  newHandlers?: Partial<Handlers<Effects, T, Result>>
+) => Result; // TupleContinuation<[E[SymbolForResume], Partial<Handlers<Effects, T, Result>>], Result>;
+
 export type PartialEffectContinuation<
   E extends Effect<string, any, any>,
   Effects extends Effect<string, any, any>,
   T,
   Result
-> = Continuation<
-  [E["resume"], PartialHandlers<Effects, T, Result>],
-  EffTask<Effect<any, any, any>, Result>
->;
+> = (
+  val: E[SymbolForResume],
+  newHandlers?: PartialHandlers<Effects, T, Result>
+) => EffTask<Effect<any, any, any>, Result>;
 
 export type Handler<
   E extends Effect<string, any, any>,
@@ -184,8 +187,13 @@ export type PartialHandler<
   T,
   Result
 > = E["val"] extends void
-  ? (k: PartialEffectContinuation<E, Effects, T, Result>) => EffTask<Effect<any, any, any>, Result>
-  : (k: PartialEffectContinuation<E, Effects, T, Result>, ...v: E["val"]) => EffTask<Effect<any, any, any>, Result>;
+  ? (
+      k: PartialEffectContinuation<E, Effects, T, Result>
+    ) => EffTask<Effect<any, any, any>, Result>
+  : (
+      k: PartialEffectContinuation<E, Effects, T, Result>,
+      ...v: E["val"]
+    ) => EffTask<Effect<any, any, any>, Result>;
 
 export type Handlers<Effects extends Effect<string, any, any>, T, Result> = {
   [tag in Effects["tag"]]: Handler<
@@ -222,23 +230,20 @@ export const runTask = <
   task: EffTask<Effects, T>,
   handlers: Handle
 ): Result => {
-  // console.log("task", task)
   switch (task.tag) {
     case "FPure":
       return handlers.return(task.val);
     case "FImpure": {
       const k = (
-        v: [
-          x: Effects["resume"],
-          handlers$: Partial<Handlers<Effects, T, Result>>
-        ]
+        val: Effects[SymbolForResume],
+        handlers$: Partial<Handlers<Effects, T, Result>> = handlers as Partial<
+          Handlers<Effects, T, Result>
+        >
       ) => {
-        const [x, handlers$] = v;
         const newHandlers: Handle = { ...handlers, ...handlers$ };
-        return runTask(task.k(x), newHandlers as any);
+        return runTask(task.k(val), newHandlers as any);
       };
 
-      // console.log("task", task);
       return handlers[task.val.tag as Effects["tag"]](
         k as any,
         ...task.val.val
@@ -247,26 +252,13 @@ export const runTask = <
   }
 };
 
-// type ImmutaGen<T, TReturn, TNext> = {
-//   next: () => { value: TNext; done: false, gen: ImmutaGen } | { value: TReturn; done: true };
-// }
-
-// const taskDo = <Effects extends Effect<string, any, any>, T>(
-//   gen: ImmutaGen<Effects, T, Effects["resume"]>
-// ): EffTask<Effects, T> => {
-//   const { value, done } = gen.next();
-//   if (done) {
-//     return FPure(value);
-//   } else {
-//     return FImpure(value, (x) => taskDo(gen));
-//   }
-// };
-
 export const taskDo = <
   Gen extends Generator<EffTask<Effect<string, any, any>, any>, any, any>
 >(
   gen: () => Gen
-): (Gen extends Generator<EffTask<infer Effects, any>, infer T, any> ? EffTask<Effects, T> : never) => {
+): Gen extends Generator<EffTask<infer Effects, any>, infer T, any>
+  ? EffTask<Effects, T>
+  : never => {
   const immut = immutagen(gen);
   const { value, next } = immut();
   if (!next) {
@@ -280,14 +272,16 @@ export const typedTaskDo = <
   Gen extends Generator<EffTask<Effect<string, any, any>, any>, any, any>
 >(
   gen: () => Gen
-): (Gen extends Generator<EffTask<infer Effects, any>, infer T, any> ? TypedEffTask<Effects, T> : never) => {
+): Gen extends Generator<EffTask<infer Effects, any>, infer T, any>
+  ? TypedEffTask<Effects, T>
+  : never => {
   return w(taskDo(gen)) as any;
 };
 
 const taskDoHelper = <Effects extends Effect<string, any, any>, T>(
-  iter: ImmutaGenIterator<EffTask<Effects, any>, T, Effects["resume"]>
-): ((val: Effects["resume"] | undefined) => EffTask<Effects, T>) => {
-  return (val: Effects["resume"] | undefined = undefined) => {
+  iter: ImmutaGenIterator<EffTask<Effects, any>, T, Effects[SymbolForResume]>
+): ((val: Effects[SymbolForResume] | undefined) => EffTask<Effects, T>) => {
+  return (val: Effects[SymbolForResume] | undefined = undefined) => {
     const { value, next } = iter(val);
     if (!next) {
       return FPure(value);
@@ -313,37 +307,31 @@ export const wrapEff = <E extends Effect<any, any, any>, R>(
 
 export type GetResult<Handle extends PartialHandlers<any, any, any>> =
   ReturnType<Handle["return"]>;
-// type GetResult<Handle extends PartialHandlers<any, any, any>> =
-//   Handle extends PartialHandlers<any, any, infer Result> ? Result : never;
-// type FallThroughTask<
-//   Effects extends Effect<string, any, any>,
-//   Handle extends PartialHandlers<Effects, T, any>,
-//   T
-// > = EffTask<
-//   Exclude<Effects, Extract<Effects, Effect<keyof Handle, any, any>>>,
-//   GetResult<Handle>
-// >;
 
-export const handle = <Effects extends Effect<string, any, any>, Handle extends PartialHandlers<Effects, T, any>, T>(
+export const handle = <
+  Effects extends Effect<string, any, any>,
+  Handle extends PartialHandlers<Effects, T, any>,
+  T
+>(
   task: EffTask<Effects, T>,
   handlers: Handle
-): (EffTask<Exclude<Effects, Extract<Effects, Effect<keyof Handle, any, any>>>, GetResult<Handle>>) => {
+): EffTask<
+  Exclude<Effects, Extract<Effects, Effect<keyof Handle, any, any>>>,
+  GetResult<Handle>
+> => {
   switch (task.tag) {
     case "FPure":
       return FPure(handlers.return(task.val)) as any;
     case "FImpure": {
       const k = (
-        v: [x: Effects["resume"], handlers$: Partial<Handlers<Effects, T, any>>]
+        val: Effects[SymbolForResume],
+        handlers$: Partial<Handlers<Effects, T, any>> = handlers as Partial<
+          Handlers<Effects, T, any>
+        >
       ) => {
-        const [x, handlers$] = v;
         const newHandlers: Handle = { ...handlers, ...handlers$ };
-        const res = handle(task.k(x), newHandlers as any);
-        return res
-        // if (res.tag === "FPure") {
-        //   return res
-        // } else {
-        //   //TODO: something here
-        // }
+        const res = handle(task.k(val), newHandlers as any);
+        return res;
       };
 
       if (task.val.tag in handlers) {
@@ -364,29 +352,35 @@ export const handle = <Effects extends Effect<string, any, any>, Handle extends 
 export const eff = <E extends Effect<any, any, any>>(
   tag: E["tag"]
 ): E["val"] extends void
-  ? () => EffTask<E, E["resume"]>
-  : (...v: E["val"]) => EffTask<E, E["resume"]> => {
+  ? () => EffTask<E, E[SymbolForResume]>
+  : (...v: E["val"]) => EffTask<E, E[SymbolForResume]> => {
   const e = (...v: E["val"]) =>
-    etaF({ tag: tag, val: v, resume: null as E["resume"] });
+    etaF({ tag: tag, val: v, resume: null as E[SymbolForResume] });
   return e as any;
 };
 
 export const typedEff = <E extends Effect<any, any, any>>(
   tag: E["tag"]
 ): E["val"] extends void
-  ? () => TypedEffTask<E, E["resume"]>
-  : (...v: E["val"]) => TypedEffTask<E, E["resume"]> => {
+  ? () => TypedEffTask<E, E[SymbolForResume]>
+  : (...v: E["val"]) => TypedEffTask<E, E[SymbolForResume]> => {
   const e = (...v: E["val"]) =>
-    w(etaF({ tag: tag, val: v, resume: null as E["resume"] }));
+    w(etaF({ tag: tag, val: v, resume: null as E[SymbolForResume] }));
   return e as any;
 };
 
 export const run = <T>(task: EffTask<never, T>): T =>
   runTask(task, { return: (v) => v });
 
+export const unWrapEff = <E extends Effect<any, any, any>, R>(
+  t: TypedEffTask<E, R>
+): EffTask<E, R> => {
+  return taskDo(function* () {
+    const val = yield* t;
+    return val;
+  });
+};
 export const w = wrapEff;
+export const u = unWrapEff;
+export const Pure = FPure;
 
-type BoardTile = {
-  text: string;
-  color: "red" | "yellow" | "blue";
-}
